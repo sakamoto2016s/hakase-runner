@@ -40,7 +40,7 @@
 </head>
 <body>
   <div id="wrap">
-    <canvas id="game" width="960" height="540" aria-label="博士ランナー ゲーム画面"></canvas>
+    <canvas id="game" width="960" height="540" tabindex="0" aria-label="博士ランナー ゲーム画面"></canvas>
     <p id="hint">PC: Space/W ジャンプ · ↓/S スライド · Enter スタート/リトライ　スマホ: タップ=ジャンプ · 下スワイプ=スライド</p>
   </div>
   <script>
@@ -48,6 +48,7 @@
   "use strict";
 
   const canvas = document.getElementById("game");
+  const wrap = document.getElementById("wrap");
   const ctx = canvas.getContext("2d");
 
   const STATE = { TITLE: 0, PLAYING: 1, GAMEOVER: 2 };
@@ -86,7 +87,6 @@
   let worldEndX = 0;
 
   const keys = new Set();
-  let enterEdge = false;
 
   let touchStartY = 0;
   let touchStartX = 0;
@@ -253,34 +253,51 @@
     }
   }
 
-  window.addEventListener("keydown", function (e) {
+  function isEnterKey(e) {
+    return e.key === "Enter" || e.code === "Enter" || e.code === "NumpadEnter";
+  }
+
+  document.addEventListener("keydown", function (e) {
     if (e.code === "Space" || e.key === " ") e.preventDefault();
     keys.add(e.code);
     if ((e.code === "Space" || e.code === "KeyW") && !e.repeat) tryJump();
     if ((e.code === "ArrowDown" || e.code === "KeyS") && !e.repeat) trySlide();
-    if (e.code === "Enter" && !e.repeat) {
-      if (!enterEdge) {
-        enterEdge = true;
-        if (state === STATE.TITLE || state === STATE.GAMEOVER) resetGame();
-      }
+    if (isEnterKey(e) && !e.repeat && (state === STATE.TITLE || state === STATE.GAMEOVER)) {
+      e.preventDefault();
+      resetGame();
     }
   }, { passive: false });
 
-  window.addEventListener("keyup", function (e) {
+  document.addEventListener("keyup", function (e) {
     keys.delete(e.code);
-    if (e.code === "Enter") enterEdge = false;
   });
 
+  wrap.addEventListener("pointerdown", function (e) {
+    if (state === STATE.TITLE || state === STATE.GAMEOVER) {
+      e.preventDefault();
+      touchActive = true;
+      touchStartY = e.clientY;
+      touchStartX = e.clientX;
+      resetGame();
+      try {
+        canvas.focus({ preventScroll: true });
+      } catch (err) {
+        canvas.focus();
+      }
+      return;
+    }
+  }, { passive: false });
+
   canvas.addEventListener("pointerdown", function (e) {
+    if (state !== STATE.PLAYING) return;
     e.preventDefault();
     touchActive = true;
     touchStartY = e.clientY;
     touchStartX = e.clientX;
-    if (state === STATE.TITLE || state === STATE.GAMEOVER) resetGame();
-    else tryJump();
+    tryJump();
   }, { passive: false });
 
-  canvas.addEventListener("pointerup", function (e) {
+  document.addEventListener("pointerup", function (e) {
     if (!touchActive) return;
     touchActive = false;
     const dy = e.clientY - touchStartY;
@@ -288,7 +305,7 @@
     if (dy > 55 && Math.abs(dy) > Math.abs(dx) * 0.6) trySlide();
   }, { passive: false });
 
-  canvas.addEventListener("pointercancel", function () {
+  document.addEventListener("pointercancel", function () {
     touchActive = false;
   });
 
