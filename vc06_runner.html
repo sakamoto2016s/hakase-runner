@@ -159,6 +159,41 @@
     osc.stop(now + 0.14);
   }
 
+  function playCoinSfx() {
+    const ctx = getAudioContext();
+    if (!ctx || ctx.state === "suspended") return;
+    const now = ctx.currentTime;
+    const notes = [
+      { t: 0, f: 880 },
+      { t: 0.055, f: 1320 },
+    ];
+
+    for (let i = 0; i < notes.length; i++) {
+      const note = notes[i];
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const t0 = now + note.t;
+      const t1 = t0 + 0.11;
+
+      osc.type = "square";
+      osc.frequency.setValueAtTime(note.f, t0);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.linearRampToValueAtTime(0.045, t0 + 0.008);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t1);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t0);
+      osc.stop(t1 + 0.01);
+      osc.addEventListener("ended", function () {
+        try {
+          osc.disconnect();
+          gain.disconnect();
+        } catch (err) {}
+      });
+    }
+  }
+
   function playGameOverSfx() {
     const ctx = getAudioContext();
     if (!ctx) return;
@@ -652,6 +687,7 @@
       if (aabbOverlap(ph, cr)) {
         c.taken = true;
         score += 50;
+        playCoinSfx();
       }
     }
 
