@@ -119,6 +119,7 @@
   let touchActive = false;
   let bgmEnabled = true;
   let audioCtx = null;
+  let gameOverJingleNodes = [];
 
   bgm.volume = 0.45;
 
@@ -192,6 +193,73 @@
     }
   }
 
+  function stopGameOverJingle() {
+    for (let i = 0; i < gameOverJingleNodes.length; i++) {
+      try {
+        gameOverJingleNodes[i].stop();
+      } catch (err) {
+        /* The node may have already finished. */
+      }
+      try {
+        gameOverJingleNodes[i].disconnect();
+      } catch (err) {
+        /* Disconnect is best-effort cleanup for finished nodes. */
+      }
+    }
+    gameOverJingleNodes = [];
+  }
+
+  function playGameOverJingle() {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    stopGameOverJingle();
+
+    const play = function () {
+      const start = ctx.currentTime + 0.58;
+      const notes = [
+        { t: 0.00, f: 392, d: 0.16 },
+        { t: 0.18, f: 349, d: 0.16 },
+        { t: 0.36, f: 294, d: 0.2 },
+        { t: 0.62, f: 247, d: 0.42 },
+      ];
+
+      for (let i = 0; i < notes.length; i++) {
+        const note = notes[i];
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
+        const t0 = start + note.t;
+        const t1 = t0 + note.d;
+
+        osc.type = "triangle";
+        osc.frequency.setValueAtTime(note.f, t0);
+        gain.gain.setValueAtTime(0.0001, t0);
+        gain.gain.linearRampToValueAtTime(0.07, t0 + 0.025);
+        gain.gain.exponentialRampToValueAtTime(0.0001, t1);
+
+        osc.connect(gain);
+        gain.connect(ctx.destination);
+        osc.start(t0);
+        osc.stop(t1 + 0.02);
+        osc.addEventListener("ended", function () {
+          try {
+            osc.disconnect();
+            gain.disconnect();
+          } catch (err) {}
+        });
+        gameOverJingleNodes.push(osc);
+      }
+    };
+
+    if (ctx.state === "suspended") {
+      const resumePromise = ctx.resume();
+      if (resumePromise && typeof resumePromise.then === "function") {
+        resumePromise.then(play).catch(function () {});
+      }
+    } else {
+      play();
+    }
+  }
+
   function updateBgmButton() {
     bgmToggle.textContent = bgmEnabled ? "BGM ON" : "BGM OFF";
     bgmToggle.setAttribute("aria-pressed", bgmEnabled ? "true" : "false");
@@ -223,6 +291,7 @@
     state = STATE.GAMEOVER;
     pauseBgm();
     playGameOverSfx();
+    playGameOverJingle();
   }
 
   function toggleBgm() {
@@ -258,6 +327,7 @@
 
   function resetGame() {
     unlockAudio();
+    stopGameOverJingle();
     cameraX = 0;
     gameTime = 0;
     score = 0;
