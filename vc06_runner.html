@@ -118,8 +118,79 @@
   let touchStartX = 0;
   let touchActive = false;
   let bgmEnabled = true;
+  let audioCtx = null;
 
   bgm.volume = 0.45;
+
+  function getAudioContext() {
+    const AudioContextClass = window.AudioContext || window.webkitAudioContext;
+    if (!AudioContextClass) return null;
+    if (!audioCtx) audioCtx = new AudioContextClass();
+    return audioCtx;
+  }
+
+  function unlockAudio() {
+    const ctx = getAudioContext();
+    if (!ctx || ctx.state !== "suspended") return;
+    const resumePromise = ctx.resume();
+    if (resumePromise && typeof resumePromise.catch === "function") {
+      resumePromise.catch(function () {});
+    }
+  }
+
+  function playJumpSfx() {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(620, now);
+    osc.frequency.exponentialRampToValueAtTime(980, now + 0.09);
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.linearRampToValueAtTime(0.07, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.13);
+
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.14);
+  }
+
+  function playGameOverSfx() {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    const play = function () {
+      const now = ctx.currentTime;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+
+      osc.type = "square";
+      osc.frequency.setValueAtTime(440, now);
+      osc.frequency.setValueAtTime(330, now + 0.12);
+      osc.frequency.setValueAtTime(220, now + 0.24);
+      osc.frequency.exponentialRampToValueAtTime(110, now + 0.46);
+      gain.gain.setValueAtTime(0.0001, now);
+      gain.gain.linearRampToValueAtTime(0.09, now + 0.02);
+      gain.gain.setValueAtTime(0.08, now + 0.28);
+      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.52);
+    };
+
+    if (ctx.state === "suspended") {
+      const resumePromise = ctx.resume();
+      if (resumePromise && typeof resumePromise.then === "function") {
+        resumePromise.then(play).catch(function () {});
+      }
+    } else {
+      play();
+    }
+  }
 
   function updateBgmButton() {
     bgmToggle.textContent = bgmEnabled ? "BGM ON" : "BGM OFF";
@@ -151,6 +222,7 @@
     if (state === STATE.GAMEOVER) return;
     state = STATE.GAMEOVER;
     pauseBgm();
+    playGameOverSfx();
   }
 
   function toggleBgm() {
@@ -185,6 +257,7 @@
   }
 
   function resetGame() {
+    unlockAudio();
     cameraX = 0;
     gameTime = 0;
     score = 0;
@@ -333,9 +406,11 @@
   function tryJump() {
     if (state !== STATE.PLAYING) return;
     if (player.jumpsLeft > 0 && !player.sliding) {
+      unlockAudio();
       player.vy = JUMP_V;
       player.onGround = false;
       player.jumpsLeft--;
+      playJumpSfx();
     }
   }
 
@@ -354,6 +429,7 @@
 
   document.addEventListener("keydown", function (e) {
     if (e.code === "Space" || e.key === " ") e.preventDefault();
+    unlockAudio();
     keys.add(e.code);
     if ((e.code === "Space" || e.code === "KeyW") && !e.repeat) tryJump();
     if ((e.code === "ArrowDown" || e.code === "KeyS") && !e.repeat) trySlide();
@@ -375,10 +451,12 @@
   bgmToggle.addEventListener("click", function (e) {
     e.preventDefault();
     e.stopPropagation();
+    unlockAudio();
     toggleBgm();
   });
 
   wrap.addEventListener("pointerdown", function (e) {
+    unlockAudio();
     if (state === STATE.TITLE || state === STATE.GAMEOVER) {
       e.preventDefault();
       touchActive = true;
@@ -395,6 +473,7 @@
   }, { passive: false });
 
   canvas.addEventListener("pointerdown", function (e) {
+    unlockAudio();
     if (state !== STATE.PLAYING) return;
     e.preventDefault();
     touchActive = true;
