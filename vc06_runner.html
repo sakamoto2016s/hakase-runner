@@ -1166,6 +1166,74 @@
     ctx.fillText("時間 " + gameTime.toFixed(1) + "s", 24, 62);
 
     if (state === STATE.TITLE) {
+      ctx.fillStyle = "rgba(10,14,26,0.7)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+      const panelW = 560;
+      const panelH = 210;
+      const panelX = cx - panelW / 2;
+      const panelY = cy - 128;
+
+      ctx.fillStyle = "rgba(13,20,36,0.76)";
+      ctx.fillRect(panelX, panelY, panelW, panelH);
+      ctx.fillStyle = "#f0c052";
+      ctx.fillRect(panelX - 5, panelY - 5, panelW + 10, 5);
+      ctx.fillRect(panelX - 5, panelY + panelH, panelW + 10, 5);
+      ctx.fillRect(panelX - 5, panelY, 5, panelH);
+      ctx.fillRect(panelX + panelW, panelY, 5, panelH);
+      ctx.fillStyle = "#7b4d2a";
+      ctx.fillRect(panelX + 8, panelY + 8, panelW - 16, 3);
+      ctx.fillRect(panelX + 8, panelY + panelH - 11, panelW - 16, 3);
+
+      for (let i = 0; i < 9; i++) {
+        const bx = panelX + 34 + i * 62;
+        ctx.fillStyle = i % 2 ? "#335070" : "#263d5b";
+        ctx.fillRect(bx, panelY + 24, 28, 4);
+        ctx.fillRect(bx + 10, panelY + panelH - 30, 28, 4);
+      }
+
+      ctx.fillStyle = "#f6c84d";
+      for (let i = 0; i < 3; i++) {
+        const coinX = panelX + 72 + i * 210;
+        const coinY = panelY + 48 + (i % 2) * 102;
+        ctx.fillRect(coinX - 10, coinY - 10, 20, 20);
+        ctx.fillStyle = "#ffe987";
+        ctx.fillRect(coinX - 5, coinY - 7, 10, 14);
+        ctx.fillStyle = "#c48a18";
+        ctx.fillRect(coinX - 10, coinY + 7, 20, 3);
+        ctx.fillStyle = "#f6c84d";
+      }
+
+      ctx.textAlign = "center";
+      ctx.font = "bold 54px system-ui,sans-serif";
+      ctx.fillStyle = "#162238";
+      ctx.fillText("博士ランナー", cx + 4, cy - 62);
+      ctx.fillStyle = "#ffdf5b";
+      ctx.fillText("博士ランナー", cx, cy - 66);
+      ctx.fillStyle = "#fff4b8";
+      ctx.fillText("博士ランナー", cx, cy - 70);
+
+      ctx.fillStyle = "#d6f2ff";
+      ctx.font = "bold 18px system-ui,sans-serif";
+      ctx.fillText("16BIT SCIENCE RUN", cx, cy - 30);
+
+      ctx.save();
+      ctx.translate(cx - 180, cy + 72);
+      ctx.scale(0.9, 0.9);
+      drawHakase(0, 0);
+      ctx.restore();
+
+      ctx.fillStyle = "#203047";
+      ctx.fillRect(cx - 94, cy + 18, 250, 58);
+      ctx.fillStyle = "#f2f7ff";
+      ctx.font = "bold 20px system-ui,sans-serif";
+      ctx.fillText("Enter または 画面タップでスタート", cx + 32, cy + 54);
+      ctx.fillStyle = "#7ee083";
+      ctx.fillRect(cx - 70, cy + 72, 202, 4);
+      return;
+
       ctx.fillStyle = "rgba(0,0,0,0.55)";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = "#fff";
