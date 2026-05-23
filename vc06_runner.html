@@ -1243,6 +1243,94 @@
       ctx.font = "18px system-ui,sans-serif";
       ctx.fillText("Enter または 画面タップ でスタート", canvas.width / 2, canvas.height / 2 + 10);
     } else if (state === STATE.GAMEOVER) {
+      ctx.fillStyle = "rgba(8,10,18,0.72)";
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+      const cx = canvas.width / 2;
+      const cy = canvas.height / 2;
+      const panelW = 560;
+      const panelH = 230;
+      const panelX = cx - panelW / 2;
+      const panelY = cy - 132;
+
+      ctx.fillStyle = "rgba(18,18,32,0.82)";
+      ctx.fillRect(panelX, panelY, panelW, panelH);
+      ctx.fillStyle = "#e05a5a";
+      ctx.fillRect(panelX - 5, panelY - 5, panelW + 10, 5);
+      ctx.fillRect(panelX - 5, panelY + panelH, panelW + 10, 5);
+      ctx.fillRect(panelX - 5, panelY, 5, panelH);
+      ctx.fillRect(panelX + panelW, panelY, 5, panelH);
+      ctx.fillStyle = "#f0c052";
+      ctx.fillRect(panelX + 8, panelY + 8, panelW - 16, 3);
+      ctx.fillRect(panelX + 8, panelY + panelH - 11, panelW - 16, 3);
+
+      for (let i = 0; i < 8; i++) {
+        const bx = panelX + 40 + i * 68;
+        ctx.fillStyle = i % 2 ? "#3b2f4e" : "#4c2638";
+        ctx.fillRect(bx, panelY + 28, 32, 4);
+        ctx.fillRect(bx + 12, panelY + panelH - 34, 32, 4);
+      }
+
+      ctx.textAlign = "center";
+      ctx.font = "bold 48px system-ui,sans-serif";
+      ctx.fillStyle = "#27151d";
+      ctx.fillText("ゲームオーバー", cx + 4, cy - 70);
+      ctx.fillStyle = "#ff5f6d";
+      ctx.fillText("ゲームオーバー", cx, cy - 74);
+      ctx.fillStyle = "#ffd1d1";
+      ctx.fillText("ゲームオーバー", cx, cy - 78);
+
+      ctx.fillStyle = "#203047";
+      ctx.fillRect(cx - 108, cy - 40, 216, 48);
+      ctx.fillStyle = "#f0c052";
+      ctx.fillRect(cx - 102, cy - 34, 204, 4);
+      ctx.fillRect(cx - 102, cy + 0, 204, 4);
+      ctx.fillStyle = "#f7f7ff";
+      ctx.font = "bold 22px system-ui,sans-serif";
+      ctx.fillText("最終スコア " + Math.floor(score), cx, cy - 10);
+
+      ctx.save();
+      ctx.translate(cx - 178, cy + 74);
+      ctx.rotate(-0.12);
+      ctx.fillStyle = "rgba(0,0,0,0.28)";
+      ctx.fillRect(-30, -5, 68, 6);
+      ctx.fillStyle = "#0a0a0a";
+      ctx.fillRect(-22, -13, 48, 10);
+      ctx.fillStyle = "#f4efe4";
+      ctx.fillRect(-26, -30, 42, 18);
+      ctx.fillRect(-4, -34, 25, 10);
+      ctx.fillStyle = "#2a2520";
+      ctx.fillRect(-8, -28, 12, 16);
+      ctx.fillStyle = "#f0d6ba";
+      ctx.fillRect(-18, -46, 25, 18);
+      ctx.fillRect(3, -39, 10, 7);
+      ctx.fillStyle = "#d9d5cc";
+      ctx.fillRect(-23, -51, 34, 8);
+      ctx.fillRect(-9, -58, 14, 14);
+      ctx.fillRect(4, -53, 11, 11);
+      ctx.fillStyle = "#050505";
+      ctx.fillRect(-15, -41, 13, 6);
+      ctx.fillRect(-2, -39, 13, 4);
+      ctx.fillStyle = "#f7f2e8";
+      ctx.fillRect(1, -32, 11, 3);
+      ctx.fillStyle = "#ffdf5b";
+      ctx.fillRect(22, -58, 4, 4);
+      ctx.fillRect(31, -48, 4, 4);
+      ctx.restore();
+
+      ctx.fillStyle = "#f2f7ff";
+      ctx.font = "bold 20px system-ui,sans-serif";
+      ctx.fillText("Enter または 画面タップでリトライ", cx + 42, cy + 58);
+      ctx.fillStyle = "#7ee083";
+      ctx.fillRect(cx - 70, cy + 76, 226, 4);
+
+      ctx.fillStyle = "#b44a4a";
+      ctx.fillRect(panelX + panelW - 82, panelY + 124, 44, 10);
+      ctx.fillRect(panelX + panelW - 64, panelY + 94, 10, 40);
+      ctx.fillStyle = "#6f2d2d";
+      ctx.fillRect(panelX + panelW - 74, panelY + 104, 28, 8);
+      return;
+
       ctx.fillStyle = "rgba(0,0,0,0.55)";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = "#ff8a80";
