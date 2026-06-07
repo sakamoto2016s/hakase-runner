@@ -97,6 +97,14 @@
   const BOSS_HEIGHT = 130;                // ボスの高さ
   const BOSS_SCREEN_X = 760;              // ボスの画面内X位置（画面右側付近）
 
+  // --- ボスのアクション設定（定数） ---
+  const BOSS_JUMP_INTERVAL = 3.5;         // ボスのジャンプ間隔（秒）
+  const BOSS_JUMP_VELOCITY = 650;         // ボスのジャンプ初速
+  const BOSS_GRAVITY = 1800;              // ボスにかかる重力
+  const BOSS_FIRE_INTERVAL = 2.5;         // 炎を吐く間隔（秒）
+  const BOSS_FIRE_SPEED = 450;            // 炎の移動速度（ピクセル/秒）
+  const BOSS_FIRE_SIZE = 36;              // 炎の描画サイズ
+
   // --- ステージ制・ボス戦の状態変数 ---
   let currentStage = 1;                    // 現在のステージ数
   let stageScoreStart = 0;                 // 現在のステージ開始時のスコア
@@ -111,6 +119,14 @@
   let bossExplosionX = 0;                  // 爆発位置のX座標
   let bossExplosionY = 0;                  // 爆発位置のY座標
   let bossParticles = [];                  // 爆発パーティクルの配列
+
+  // --- ボスのアクション状態変数 ---
+  let bossAlt = 0;                        // ボスの浮遊高度（地面からの高さ）
+  let bossVy = 0;                         // ボスのY方向速度
+  let bossOnGround = true;                // ボスの接地フラグ
+  let bossJumpTimer = 0;                  // 次のジャンプまでの時間
+  let bossFireTimer = 0;                  // 次の炎を吐くまでの時間
+  let bossProjectiles = [];               // ボスの炎弾の配列（各要素: { x, y, w, h }）
 
   const PLAYER_SCREEN_X = 200;
   const GROUND_MARGIN = 100;
@@ -333,6 +349,40 @@
     }
   }
 
+  function playFireSfx() {
+    const ctx = getAudioContext();
+    if (!ctx || ctx.state === "suspended") return;
+    const now = ctx.currentTime;
+    
+    // 短いノイズ発射音 ("シュッ" / "ボッ")
+    const bufferSize = ctx.sampleRate * 0.12; // 0.12秒
+    const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < bufferSize; i++) {
+      data[i] = Math.random() * 2 - 1;
+    }
+    
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+    
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(2000, now);
+    filter.frequency.exponentialRampToValueAtTime(600, now + 0.1);
+    filter.Q.setValueAtTime(4.0, now);
+    
+    const gain = ctx.createGain();
+    gain.gain.setValueAtTime(0.08, now); // 控えめな音量
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.11);
+    
+    noise.connect(filter);
+    filter.connect(gain);
+    gain.connect(ctx.destination);
+    
+    noise.start(now);
+    noise.stop(now + 0.12);
+  }
+
   function stopGameOverJingle() {
     for (let i = 0; i < gameOverJingleNodes.length; i++) {
       try {
@@ -505,6 +555,12 @@
     bossExplosionX = 0;
     bossExplosionY = 0;
     bossParticles = [];
+    bossAlt = 0;
+    bossVy = 0;
+    bossOnGround = true;
+    bossJumpTimer = BOSS_JUMP_INTERVAL;
+    bossFireTimer = BOSS_FIRE_INTERVAL;
+    bossProjectiles = [];
     stageTextTimer = STAGE_INTRO_DURATION;
     stageTextType = "INTRO";
     ensureWorld(2500);
@@ -809,6 +865,12 @@
         isBossBattle = true;
         bossScoreStart = score;
         bossTimeStart = gameTime;
+        bossAlt = 0;
+        bossVy = 0;
+        bossOnGround = true;
+        bossJumpTimer = BOSS_JUMP_INTERVAL;
+        bossFireTimer = BOSS_FIRE_INTERVAL;
+        bossProjectiles = [];
       }
     }
 
@@ -844,6 +906,78 @@
             age: 0
           });
         }
+
+        // ボスアクション状態と炎弾をリセット
+        bossProjectiles = [];
+        bossAlt = 0;
+        bossVy = 0;
+      }
+    }
+
+    // --- ボスアクションの更新 ---
+    if (isBossBattle) {
+      // 1. ジャンプ物理演算
+      bossVy -= BOSS_GRAVITY * dt;
+      bossAlt += bossVy * dt;
+      if (bossAlt <= 0) {
+        bossAlt = 0;
+        bossVy = 0;
+        bossOnGround = true;
+      } else {
+        bossOnGround = false;
+      }
+
+      // 2. ジャンプタイマー更新
+      bossJumpTimer -= dt;
+      if (bossJumpTimer <= 0) {
+        if (bossOnGround) {
+          bossVy = BOSS_JUMP_VELOCITY;
+          bossOnGround = false;
+        }
+        bossJumpTimer = BOSS_JUMP_INTERVAL;
+      }
+
+      // 3. 炎発射タイマー更新
+      bossFireTimer -= dt;
+      if (bossFireTimer <= 0) {
+        const elapsed = gameTime - bossTimeStart;
+        const slideInProgress = Math.min(1.0, elapsed / 1.5);
+        const currentBossX = (canvas.width + 100) - ((canvas.width + 100) - BOSS_SCREEN_X) * slideInProgress;
+        
+        // 炎弾をボスの口元あたりから射出
+        bossProjectiles.push({
+          x: currentBossX - 50,
+          y: groundY - bossAlt - 125,
+          w: BOSS_FIRE_SIZE,
+          h: BOSS_FIRE_SIZE - 10
+        });
+        playFireSfx(); // 炎発射音
+        bossFireTimer = BOSS_FIRE_INTERVAL;
+      }
+    }
+
+    // --- 炎弾の移動・画面外削除・当たり判定 ---
+    for (let i = bossProjectiles.length - 1; i >= 0; i--) {
+      const f = bossProjectiles[i];
+      f.x -= BOSS_FIRE_SPEED * dt;
+      
+      // 画面左外へ出たら削除
+      if (f.x + f.w < 0) {
+        bossProjectiles.splice(i, 1);
+        continue;
+      }
+      
+      // 博士との当たり判定 (AABB)
+      const fireHitBox = {
+        left: f.x + 6,
+        right: f.x + f.w - 6,
+        top: f.y + 6,
+        bottom: f.y + f.h - 6
+      };
+      const playerBox = playerAABB();
+      if (aabbOverlap(playerBox, fireHitBox)) {
+        setGameOver();
+        return;
       }
     }
 
@@ -1489,6 +1623,38 @@
     ctx.restore();
   }
 
+  function drawBossProjectiles() {
+    for (let i = 0; i < bossProjectiles.length; i++) {
+      const f = bossProjectiles[i];
+      
+      ctx.save();
+      // 火の玉の中心
+      ctx.translate(f.x + f.w / 2, f.y + f.h / 2);
+      
+      // パラパラとゆらめくアニメーションのためのゆらぎ値
+      const flicker = (Math.floor(gameTime * 20) + i) % 3;
+      
+      // 外側の炎 (赤)
+      ctx.fillStyle = "#ff5f6d";
+      ctx.fillRect(-f.w / 2 - flicker, -f.h / 2, f.w + flicker, f.h);
+      
+      // 中側の炎 (オレンジ)
+      ctx.fillStyle = "#ff8a80";
+      ctx.fillRect(-f.w / 2 + 6, -f.h / 2 + 4, f.w - 10, f.h - 8);
+      
+      // 内側の芯 (黄色・白)
+      ctx.fillStyle = "#ffe987";
+      ctx.fillRect(-f.w / 2 + 14, -f.h / 2 + 8, f.w - 24, f.h - 16);
+      
+      // 炎の尾っぽ (ドット破片を後ろに配置)
+      ctx.fillStyle = "#ff5f6d";
+      ctx.fillRect(f.w / 2 + flicker, -4, 6, 6);
+      ctx.fillRect(f.w / 2 + 6 - flicker, 2, 4, 4);
+
+      ctx.restore();
+    }
+  }
+
   function drawWorld() {
     for (let i = 0; i < obstacles.length; i++) {
       const o = obstacles[i];
@@ -1847,10 +2013,11 @@
         const elapsed = gameTime - bossTimeStart;
         const slideInProgress = Math.min(1.0, elapsed / 1.5); // 1.5秒かけてスライドイン
         const currentX = (canvas.width + 100) - ((canvas.width + 100) - BOSS_SCREEN_X) * slideInProgress;
-        drawBoss(currentX, groundY);
+        drawBoss(currentX, groundY - bossAlt);
       } else if (bossExplosionTimer > 0) {
         drawBossExplosion();
       }
+      drawBossProjectiles();
     }
     drawHUD();
   }
