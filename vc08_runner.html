@@ -85,19 +85,32 @@
   let gameOverSelectIndex = 0;
 
   // --- ステージ制・ボス戦の設定（定数） ---
-  const STAGE_BOSS_SCORE_REQUIRED = 500;  // ボス出現に必要なスコア
+  const STAGE_BOSS_SCORE_BASE = 500;       // ステージ1のボス出現に必要なスコア
+  const STAGE_BOSS_SCORE_GROWTH = 200;     // ステージごとのボス出現必要スコア増加量
   const BOSS_CLEAR_POINTS_BASE = 500;      // ステージ1のボス突破に必要なポイント
   const BOSS_CLEAR_POINTS_GROWTH = 200;    // ステージごとのボス突破ポイント増加量
   const STAGE_INTRO_DURATION = 3.0;        // ステージ表示の表示時間（秒）
   const STAGE_CLEAR_DURATION = 3.0;        // STAGE CLEAR表示の表示時間（秒）
+
+  // --- ボス（怪獣）の設定（定数） ---
+  const BOSS_WIDTH = 90;                  // ボスの幅
+  const BOSS_HEIGHT = 130;                // ボスの高さ
+  const BOSS_SCREEN_X = 760;              // ボスの画面内X位置（画面右側付近）
 
   // --- ステージ制・ボス戦の状態変数 ---
   let currentStage = 1;                    // 現在のステージ数
   let stageScoreStart = 0;                 // 現在のステージ開始時のスコア
   let isBossBattle = false;                // ボス戦中フラグ
   let bossScoreStart = 0;                  // ボス戦開始時のスコア
+  let bossTimeStart = 0;                  // ボス戦開始時のゲーム時間（秒）
   let stageTextTimer = 0;                  // ステージ表示演出用タイマー（秒）
   let stageTextType = "";                  // 演出テキストの種類 ("INTRO", "CLEAR")
+
+  // --- ボス爆発演出の状態変数 ---
+  let bossExplosionTimer = 0;              // 爆発演出タイマー（秒）
+  let bossExplosionX = 0;                  // 爆発位置のX座標
+  let bossExplosionY = 0;                  // 爆発位置のY座標
+  let bossParticles = [];                  // 爆発パーティクルの配列
 
   const PLAYER_SCREEN_X = 200;
   const GROUND_MARGIN = 100;
@@ -232,6 +245,82 @@
       gain.connect(ctx.destination);
       osc.start(now);
       osc.stop(now + 0.52);
+    };
+
+    if (ctx.state === "suspended") {
+      const resumePromise = ctx.resume();
+      if (resumePromise && typeof resumePromise.then === "function") {
+        resumePromise.then(play).catch(function () {});
+      }
+    } else {
+      play();
+    }
+  }
+
+  function playExplosionSfx() {
+    const ctx = getAudioContext();
+    if (!ctx) return;
+    
+    const play = function () {
+      const now = ctx.currentTime;
+      
+      // 1. 低音の衝撃音 (Oscillator) - 三角波で下降音を作る
+      const osc = ctx.createOscillator();
+      const oscGain = ctx.createGain();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(250, now);
+      osc.frequency.exponentialRampToValueAtTime(40, now + 0.28);
+      
+      oscGain.gain.setValueAtTime(0.3, now); // BGMに負けない音量
+      oscGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.28);
+      
+      osc.connect(oscGain);
+      oscGain.connect(ctx.destination);
+      osc.start(now);
+      osc.stop(now + 0.3);
+      
+      // 2. 爆風のノイズ音 (Noise Source) - バンドパスフィルターで「バシュッ」という音を作る
+      const bufferSize = ctx.sampleRate * 0.35; // 0.35秒
+      const buffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let i = 0; i < bufferSize; i++) {
+        data[i] = Math.random() * 2 - 1;
+      }
+      
+      const noise = ctx.createBufferSource();
+      noise.buffer = buffer;
+      
+      const filter = ctx.createBiquadFilter();
+      filter.type = "bandpass";
+      filter.frequency.setValueAtTime(1200, now);
+      filter.frequency.exponentialRampToValueAtTime(150, now + 0.32);
+      filter.Q.setValueAtTime(3.0, now);
+      
+      const noiseGain = ctx.createGain();
+      noiseGain.gain.setValueAtTime(0.32, now); // BGMに負けない音量
+      noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.35);
+      
+      noise.connect(filter);
+      filter.connect(noiseGain);
+      noiseGain.connect(ctx.destination);
+      
+      noise.start(now);
+      noise.stop(now + 0.36);
+      
+      // 使用済みのノードを終了後に切断する
+      osc.addEventListener("ended", function () {
+        try {
+          osc.disconnect();
+          oscGain.disconnect();
+        } catch (err) {}
+      });
+      noise.addEventListener("ended", function () {
+        try {
+          noise.disconnect();
+          filter.disconnect();
+          noiseGain.disconnect();
+        } catch (err) {}
+      });
     };
 
     if (ctx.state === "suspended") {
@@ -411,6 +500,11 @@
     stageScoreStart = 0;
     isBossBattle = false;
     bossScoreStart = 0;
+    bossTimeStart = 0;
+    bossExplosionTimer = 0;
+    bossExplosionX = 0;
+    bossExplosionY = 0;
+    bossParticles = [];
     stageTextTimer = STAGE_INTRO_DURATION;
     stageTextType = "INTRO";
     ensureWorld(2500);
@@ -709,10 +803,12 @@
     }
 
     // --- ボス戦の開始判定 ---
+    const requiredBossScore = STAGE_BOSS_SCORE_BASE + (currentStage - 1) * STAGE_BOSS_SCORE_GROWTH;
     if (!isBossBattle && stageTextType !== "CLEAR") {
-      if (score - stageScoreStart >= STAGE_BOSS_SCORE_REQUIRED) {
+      if (score - stageScoreStart >= requiredBossScore) {
         isBossBattle = true;
         bossScoreStart = score;
+        bossTimeStart = gameTime;
       }
     }
 
@@ -723,6 +819,43 @@
         isBossBattle = false;
         stageTextTimer = STAGE_CLEAR_DURATION;
         stageTextType = "CLEAR";
+
+        // --- 爆発演出の初期化 ---
+        const elapsed = gameTime - bossTimeStart;
+        const slideInProgress = Math.min(1.0, elapsed / 1.5);
+        bossExplosionX = (canvas.width + 100) - ((canvas.width + 100) - BOSS_SCREEN_X) * slideInProgress;
+        bossExplosionY = groundY - 65; // ボスのほぼ中心 (groundY - BOSS_HEIGHT/2)
+        bossExplosionTimer = 1.2;
+        playExplosionSfx(); // 爆発音の再生
+
+        bossParticles = [];
+        const colors = ["#ff5f6d", "#ff8a80", "#ffe987", "#f0c052", "#ffffff"];
+        for (let i = 0; i < 40; i++) {
+          const angle = Math.random() * Math.PI * 2;
+          const speed = 50 + Math.random() * 200;
+          bossParticles.push({
+            x: 0,
+            y: 0,
+            vx: Math.cos(angle) * speed,
+            vy: Math.sin(angle) * speed - 50,
+            size: 6 + Math.random() * 12,
+            color: colors[Math.floor(Math.random() * colors.length)],
+            life: 0.6 + Math.random() * 0.6,
+            age: 0
+          });
+        }
+      }
+    }
+
+    // --- 爆発演出の更新 ---
+    if (bossExplosionTimer > 0) {
+      bossExplosionTimer -= dt;
+      for (let i = 0; i < bossParticles.length; i++) {
+        const p = bossParticles[i];
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+        p.vy += 200 * dt; // 重力
+        p.age += dt;
       }
     }
 
@@ -1245,6 +1378,117 @@
     }
   }
 
+  function drawBoss(screenX, bottomY) {
+    const cx = screenX;
+    const base = bottomY;
+    const bob = Math.sin(gameTime * 8) * 3;
+
+    ctx.save();
+    ctx.translate(cx, base);
+
+    // 影 (Shadow)
+    ctx.fillStyle = "rgba(0,0,0,0.25)";
+    ctx.fillRect(-50, -5, 100, 7);
+
+    // 足 (Legs/Claws)
+    ctx.fillStyle = "#1e3d2f"; // 暗い緑
+    ctx.fillRect(10, -25, 25, 25);
+    ctx.fillRect(-25, -25, 25, 25);
+    
+    ctx.fillStyle = "#2d5e46"; // メインの緑
+    ctx.fillRect(15, -20, 15, 20);
+    ctx.fillRect(-20, -20, 15, 20);
+    ctx.fillStyle = "#fff"; // 爪
+    ctx.fillRect(15, -5, 6, 5);
+    ctx.fillRect(-20, -5, 6, 5);
+
+    // 尻尾 (Tail) - 右側に伸びる
+    ctx.fillStyle = "#2d5e46";
+    ctx.fillRect(25, -50, 45, 20);
+    ctx.fillRect(50, -40, 30, 15);
+    ctx.fillStyle = "#1e3d2f";
+    ctx.fillRect(25, -30, 35, 10);
+    // 尻尾のトゲ (Tail spikes)
+    ctx.fillStyle = "#e05a5a"; // 赤いトゲ
+    ctx.fillRect(40, -56, 8, 6);
+    ctx.fillRect(65, -46, 6, 6);
+
+    // 胴体 (Torso)
+    ctx.fillStyle = "#2d5e46"; // メインの緑
+    ctx.fillRect(-35, -100, 75, 80);
+    // お腹 (Belly) - 左下
+    ctx.fillStyle = "#f0c052"; // 黄色
+    ctx.fillRect(-35, -75, 20, 50);
+    ctx.fillRect(-25, -85, 20, 10);
+
+    // 背中のトゲ (Back Spikes) - 右側
+    ctx.fillStyle = "#e05a5a";
+    ctx.fillRect(40, -90, 8, 16);
+    ctx.fillRect(40, -65, 8, 16);
+    ctx.fillRect(40, -40, 8, 16);
+
+    // 首 (Neck) - ボブ（縦揺れ）を適用
+    ctx.fillStyle = "#2d5e46";
+    ctx.fillRect(-30, -115 + bob, 45, 25);
+
+    // 頭 (Head) - 左向き
+    ctx.fillStyle = "#2d5e46";
+    ctx.fillRect(-50, -140 + bob, 60, 30); // 頭部メイン
+    ctx.fillRect(-45, -118 + bob, 50, 10); // 下顎
+
+    // 目 (Angry Eye) - 左向きなので左側に配置
+    ctx.fillStyle = "#ff5f6d"; // 赤
+    ctx.fillRect(-42, -134 + bob, 10, 8);
+    ctx.fillStyle = "#fff"; // 瞳
+    ctx.fillRect(-42, -132 + bob, 4, 4);
+
+    // 鼻・角 (Horn)
+    ctx.fillStyle = "#ffe987";
+    ctx.fillRect(-56, -136 + bob, 6, 6); // 鼻先の角
+    ctx.fillRect(0, -146 + bob, 8, 8);   // 頭の上の角
+
+    // 牙 (Teeth)
+    ctx.fillStyle = "#fff";
+    ctx.fillRect(-45, -112 + bob, 4, 4);
+    ctx.fillRect(-35, -112 + bob, 4, 4);
+    ctx.fillRect(-25, -112 + bob, 4, 4);
+
+    ctx.restore();
+  }
+
+  function drawBossExplosion() {
+    ctx.save();
+    ctx.translate(bossExplosionX, bossExplosionY);
+    
+    // レトロな円形膨張エフェクト（爆風リング）
+    const progress = Math.max(0, 1.2 - bossExplosionTimer) / 1.2; // 0.0 to 1.0
+    
+    // 赤・オレンジ・黄色の同心円
+    ctx.beginPath();
+    ctx.fillStyle = "rgba(255, 95, 109, " + (0.5 * (1 - progress)) + ")";
+    ctx.arc(0, 0, progress * 130, 0, Math.PI * 2);
+    ctx.fill();
+
+    ctx.beginPath();
+    ctx.fillStyle = "rgba(240, 192, 82, " + (0.6 * (1 - progress)) + ")";
+    ctx.arc(0, 0, progress * 90, 0, Math.PI * 2);
+    ctx.fill();
+
+    // パーティクルの描画（四角形でドット絵感）
+    for (let i = 0; i < bossParticles.length; i++) {
+      const p = bossParticles[i];
+      if (p.age >= p.life) continue;
+      
+      const alpha = 1.0 - (p.age / p.life);
+      ctx.fillStyle = p.color;
+      ctx.globalAlpha = alpha;
+      
+      // ドット感のある四角形パーティクル
+      ctx.fillRect(p.x - p.size / 2, p.y - p.size / 2, p.size, p.size);
+    }
+    ctx.restore();
+  }
+
   function drawWorld() {
     for (let i = 0; i < obstacles.length; i++) {
       const o = obstacles[i];
@@ -1306,9 +1550,10 @@
         let textColor = "";
 
         if (!isBossBattle) {
+          const requiredBossScore = STAGE_BOSS_SCORE_BASE + (currentStage - 1) * STAGE_BOSS_SCORE_GROWTH;
           titleText = "ボス登場まで";
-          remaining = Math.max(0, Math.ceil(STAGE_BOSS_SCORE_REQUIRED - (score - stageScoreStart)));
-          progress = Math.min(1.0, Math.max(0.0, (score - stageScoreStart) / STAGE_BOSS_SCORE_REQUIRED));
+          remaining = Math.max(0, Math.ceil(requiredBossScore - (score - stageScoreStart)));
+          progress = Math.min(1.0, Math.max(0.0, (score - stageScoreStart) / requiredBossScore));
           barColor = "#ffe987";    // ボス戦前は黄色系統のゲージ
           borderColor = "#f0c052"; // ゴールド枠
           bgColor = "rgba(13,20,36,0.75)";
@@ -1597,6 +1842,16 @@
     drawWorld();
     const bottom = groundY - player.alt;
     drawHakase(PLAYER_SCREEN_X, bottom);
+    if (state === STATE.PLAYING) {
+      if (isBossBattle) {
+        const elapsed = gameTime - bossTimeStart;
+        const slideInProgress = Math.min(1.0, elapsed / 1.5); // 1.5秒かけてスライドイン
+        const currentX = (canvas.width + 100) - ((canvas.width + 100) - BOSS_SCREEN_X) * slideInProgress;
+        drawBoss(currentX, groundY);
+      } else if (bossExplosionTimer > 0) {
+        drawBossExplosion();
+      }
+    }
     drawHUD();
   }
 
