@@ -164,11 +164,16 @@
   let gunItems = [];
   let playerBullets = [];
 
-  let weapon = null;   // null | "gun"
+  let weapon = null;   // null | "gun" | "bazooka"
   let ammo = 0;
   const GUN_AMMO = 5;
+  const BAZOOKA_AMMO = 2;
   const BULLET_SPEED = 700;
+  const BAZOOKA_SPEED = 420;
   const GUN_ITEM_SPAWN_RATE = 0.08;
+  const BAZOOKA_ITEM_SPAWN_RATE = 0.04;
+  let bazookaItems = [];
+  let bazookaBullets = [];
 
   let worldEndX = 0;
 
@@ -362,6 +367,62 @@
     } else {
       play();
     }
+  }
+
+  function playBazookaPickupSfx() {
+    const ctx = getAudioContext();
+    if (!ctx || ctx.state === "suspended") return;
+    const now = ctx.currentTime;
+    // 重めの2音（低めの矩形波＋ノイズ）
+    const notes = [{ t: 0.00, f: 220 }, { t: 0.09, f: 330 }];
+    for (let i = 0; i < notes.length; i++) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const t0 = now + notes[i].t;
+      osc.type = "square";
+      osc.frequency.setValueAtTime(notes[i].f, t0);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.linearRampToValueAtTime(0.08, t0 + 0.015);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(t0); osc.stop(t0 + 0.13);
+      osc.addEventListener("ended", function () { try { osc.disconnect(); gain.disconnect(); } catch (e) {} });
+    }
+  }
+
+  function playBazookaShotSfx() {
+    const ctx = getAudioContext();
+    if (!ctx || ctx.state === "suspended") return;
+    const now = ctx.currentTime;
+    // 低周波の「ドン」＋ノイズ爆発感
+    const osc = ctx.createOscillator();
+    const oscGain = ctx.createGain();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(180, now);
+    osc.frequency.exponentialRampToValueAtTime(40, now + 0.18);
+    oscGain.gain.setValueAtTime(0.15, now);
+    oscGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.20);
+    osc.connect(oscGain); oscGain.connect(ctx.destination);
+    osc.start(now); osc.stop(now + 0.21);
+    osc.addEventListener("ended", function () { try { osc.disconnect(); oscGain.disconnect(); } catch (e) {} });
+
+    const bufSize = Math.floor(ctx.sampleRate * 0.15);
+    const buf = ctx.createBuffer(1, bufSize, ctx.sampleRate);
+    const data = buf.getChannelData(0);
+    for (let i = 0; i < bufSize; i++) data[i] = Math.random() * 2 - 1;
+    const noise = ctx.createBufferSource();
+    noise.buffer = buf;
+    const filter = ctx.createBiquadFilter();
+    filter.type = "bandpass";
+    filter.frequency.setValueAtTime(800, now);
+    filter.frequency.exponentialRampToValueAtTime(120, now + 0.15);
+    filter.Q.setValueAtTime(2.0, now);
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(0.12, now);
+    noiseGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+    noise.connect(filter); filter.connect(noiseGain); noiseGain.connect(ctx.destination);
+    noise.start(now); noise.stop(now + 0.17);
+    noise.addEventListener("ended", function () { try { noise.disconnect(); filter.disconnect(); noiseGain.disconnect(); } catch (e) {} });
   }
 
   function playGunPickupSfx() {
@@ -699,6 +760,8 @@
     healItems = [];
     gunItems = [];
     playerBullets = [];
+    bazookaItems = [];
+    bazookaBullets = [];
     weapon = null;
     ammo = 0;
     worldEndX = 1200;
@@ -851,6 +914,12 @@
         gunItems.push({ x: gx, y: groundY - 36, taken: false });
       }
 
+      // バズーカアイテム（銃より低確率でスポーン）
+      if (!isBossBattle && Math.random() < BAZOOKA_ITEM_SPAWN_RATE) {
+        const bx = chunkStart + 80 + Math.random() * (chunkW - 160);
+        bazookaItems.push({ x: bx, y: groundY - 36, taken: false });
+      }
+
       worldEndX = chunkEnd;
     }
   }
@@ -863,7 +932,9 @@
     obstacles = obstacles.filter(function (o) { return o.x + o.w > cut; });
     healItems = healItems.filter(function (h) { return h.x > cut; });
     gunItems = gunItems.filter(function (g) { return g.x > cut; });
+    bazookaItems = bazookaItems.filter(function (g) { return g.x > cut; });
     playerBullets = playerBullets.filter(function (b) { return b.x < cameraX + canvas.width + 100; });
+    bazookaBullets = bazookaBullets.filter(function (b) { return b.x < cameraX + canvas.width + 100; });
   }
 
   function tryJump() {
@@ -888,20 +959,21 @@
 
   function tryFireGun() {
     if (state !== STATE.PLAYING) return;
-    if (weapon !== "gun" || ammo <= 0) return;
+    if (!weapon || ammo <= 0) return;
+    const originX = cameraX + PLAYER_SCREEN_X + 20;
     const bulletY = groundY - player.alt - 40;
-    playerBullets.push({
-      x: cameraX + PLAYER_SCREEN_X + 20,
-      y: bulletY,
-      w: 12,
-      h: 6,
-    });
+    if (weapon === "gun") {
+      playerBullets.push({ x: originX, y: bulletY, w: 12, h: 6 });
+      playGunShotSfx();
+    } else if (weapon === "bazooka") {
+      bazookaBullets.push({ x: originX, y: bulletY, w: 22, h: 10 });
+      playBazookaShotSfx();
+    }
     ammo--;
     if (ammo <= 0) {
       weapon = null;
       ammo = 0;
     }
-    playGunShotSfx();
   }
 
   function isEnterKey(e) {
@@ -1307,21 +1379,32 @@
       }
     }
 
-    // --- 弾の移動・敵ヒット判定 ---
+    // --- バズーカアイテム取得判定 ---
+    for (let i = 0; i < bazookaItems.length; i++) {
+      const g = bazookaItems[i];
+      if (g.taken) continue;
+      const gr = { left: g.x - 18, right: g.x + 18, top: g.y - 14, bottom: g.y + 14 };
+      if (aabbOverlap(ph, gr)) {
+        g.taken = true;
+        if (weapon === "bazooka") {
+          ammo += BAZOOKA_AMMO;
+        } else {
+          weapon = "bazooka";
+          ammo = BAZOOKA_AMMO;
+        }
+        playBazookaPickupSfx();
+      }
+    }
+
+    // --- 銃弾の移動・敵/切り株ヒット判定 ---
     for (let bi = playerBullets.length - 1; bi >= 0; bi--) {
       const b = playerBullets[bi];
       b.x += BULLET_SPEED * dt;
-      // 画面右外へ出たら削除（cullOffscreenでも処理するが即時削除）
       if (b.x > cameraX + canvas.width + 60) {
         playerBullets.splice(bi, 1);
         continue;
       }
-      const bb = {
-        left: b.x,
-        right: b.x + b.w,
-        top: b.y - b.h / 2,
-        bottom: b.y + b.h / 2,
-      };
+      const bb = { left: b.x, right: b.x + b.w, top: b.y - b.h / 2, bottom: b.y + b.h / 2 };
       let hit = false;
       for (let ei = enemies.length - 1; ei >= 0; ei--) {
         const e = enemies[ei];
@@ -1342,9 +1425,65 @@
           break;
         }
       }
-      if (hit) {
-        playerBullets.splice(bi, 1);
+      if (!hit) {
+        for (let oi = obstacles.length - 1; oi >= 0; oi--) {
+          const o = obstacles[oi];
+          const ob = { left: o.x, right: o.x + o.w, top: groundY - o.h, bottom: groundY };
+          if (aabbOverlap(bb, ob)) {
+            obstacles.splice(oi, 1);
+            score += 100;
+            playGunHitSfx();
+            hit = true;
+            break;
+          }
+        }
       }
+      if (hit) playerBullets.splice(bi, 1);
+    }
+
+    // --- バズーカ弾の移動・敵/切り株ヒット判定 ---
+    for (let bi = bazookaBullets.length - 1; bi >= 0; bi--) {
+      const b = bazookaBullets[bi];
+      b.x += BAZOOKA_SPEED * dt;
+      if (b.x > cameraX + canvas.width + 60) {
+        bazookaBullets.splice(bi, 1);
+        continue;
+      }
+      const bb = { left: b.x, right: b.x + b.w, top: b.y - b.h / 2, bottom: b.y + b.h / 2 };
+      let hit = false;
+      for (let ei = enemies.length - 1; ei >= 0; ei--) {
+        const e = enemies[ei];
+        let eb;
+        if (e.kind === "walker") {
+          eb = { left: e.x - e.w / 2, right: e.x + e.w / 2, top: groundY - e.h, bottom: groundY };
+        } else if (e.kind === "floater") {
+          const yy = e._y !== undefined ? e._y : e.y;
+          eb = { left: e.x - e.w / 2, right: e.x + e.w / 2, top: yy - e.h, bottom: yy };
+        } else {
+          eb = { left: e.x - e.w / 2, right: e.x + e.w / 2, top: e.baseY - e.h, bottom: e.baseY };
+        }
+        if (aabbOverlap(bb, eb)) {
+          enemies.splice(ei, 1);
+          score += 200;
+          playGunHitSfx();
+          hit = true;
+          break;
+        }
+      }
+      if (!hit) {
+        for (let oi = obstacles.length - 1; oi >= 0; oi--) {
+          const o = obstacles[oi];
+          const ob = { left: o.x, right: o.x + o.w, top: groundY - o.h, bottom: groundY };
+          if (aabbOverlap(bb, ob)) {
+            obstacles.splice(oi, 1);
+            score += 200;
+            playGunHitSfx();
+            hit = true;
+            break;
+          }
+        }
+      }
+      if (hit) bazookaBullets.splice(bi, 1);
     }
 
     for (let i = 0; i < coins.length; i++) {
@@ -2043,6 +2182,56 @@
       ctx.fillRect(sx, b.y - 1, 4, 2);
     }
 
+    // バズーカアイテム描画
+    for (let i = 0; i < bazookaItems.length; i++) {
+      const g = bazookaItems[i];
+      if (g.taken) continue;
+      const sx = g.x - cameraX;
+      const sy = g.y;
+      ctx.save();
+      ctx.translate(sx, sy);
+      // アイテム枠（濃いオレンジ背景）
+      ctx.fillStyle = "rgba(180,80,0,0.55)";
+      ctx.fillRect(-18, -14, 36, 28);
+      ctx.strokeStyle = "#ff9940";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-18, -14, 36, 28);
+      // バズーカ本体（太い筒）
+      ctx.fillStyle = "#888";
+      ctx.fillRect(-14, -5, 22, 10);
+      // 砲身（さらに太く前方へ）
+      ctx.fillStyle = "#aaa";
+      ctx.fillRect(-4, -7, 20, 14);
+      // 砲口
+      ctx.fillStyle = "#555";
+      ctx.fillRect(14, -8, 5, 16);
+      // グリップ
+      ctx.fillStyle = "#6a3a1a";
+      ctx.fillRect(-12, 3, 8, 9);
+      // 肩当て（後端の丸み）
+      ctx.fillStyle = "#666";
+      ctx.fillRect(-16, -4, 5, 8);
+      // ハイライト
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(-12, -6, 18, 3);
+      ctx.restore();
+    }
+
+    // バズーカ弾描画
+    for (let i = 0; i < bazookaBullets.length; i++) {
+      const b = bazookaBullets[i];
+      const sx = b.x - cameraX;
+      // 弾本体（濃いオレンジ）
+      ctx.fillStyle = "#ff6600";
+      ctx.fillRect(sx, b.y - b.h / 2, b.w, b.h);
+      // 弾頭（黄色）
+      ctx.fillStyle = "#ffe987";
+      ctx.fillRect(sx + b.w - 6, b.y - b.h / 2 + 2, 6, b.h - 4);
+      // 尾（明るい炎）
+      ctx.fillStyle = "#ff9940";
+      ctx.fillRect(sx - 6, b.y - b.h / 2 + 3, 8, b.h - 6);
+    }
+
     for (let i = 0; i < enemies.length; i++) drawEnemy(enemies[i]);
   }
 
@@ -2071,6 +2260,11 @@
       ctx.font = "bold 16px system-ui,sans-serif";
       ctx.textAlign = "left";
       ctx.fillText("GUN  " + ammo + " / " + GUN_AMMO, 24, 122);
+    } else if (weapon === "bazooka") {
+      ctx.fillStyle = "#ff9940";
+      ctx.font = "bold 16px system-ui,sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("BZK  " + ammo + " / " + BAZOOKA_AMMO, 24, 122);
     }
 
     if (state === STATE.PLAYING) {
