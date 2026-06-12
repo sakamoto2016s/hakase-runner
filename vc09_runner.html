@@ -161,6 +161,14 @@
   let enemies = [];
   let obstacles = [];
   let healItems = [];
+  let gunItems = [];
+  let playerBullets = [];
+
+  let weapon = null;   // null | "gun"
+  let ammo = 0;
+  const GUN_AMMO = 5;
+  const BULLET_SPEED = 700;
+  const GUN_ITEM_SPAWN_RATE = 0.08;
 
   let worldEndX = 0;
 
@@ -354,6 +362,58 @@
     } else {
       play();
     }
+  }
+
+  function playGunPickupSfx() {
+    const ctx = getAudioContext();
+    if (!ctx || ctx.state === "suspended") return;
+    const now = ctx.currentTime;
+    const notes = [{ t: 0.00, f: 440 }, { t: 0.06, f: 660 }, { t: 0.12, f: 880 }];
+    for (let i = 0; i < notes.length; i++) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const t0 = now + notes[i].t;
+      osc.type = "square";
+      osc.frequency.setValueAtTime(notes[i].f, t0);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.linearRampToValueAtTime(0.05, t0 + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.08);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(t0); osc.stop(t0 + 0.09);
+      osc.addEventListener("ended", function () { try { osc.disconnect(); gain.disconnect(); } catch (e) {} });
+    }
+  }
+
+  function playGunShotSfx() {
+    const ctx = getAudioContext();
+    if (!ctx || ctx.state === "suspended") return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "square";
+    osc.frequency.setValueAtTime(300, now);
+    osc.frequency.exponentialRampToValueAtTime(80, now + 0.07);
+    gain.gain.setValueAtTime(0.07, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.08);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(now); osc.stop(now + 0.09);
+    osc.addEventListener("ended", function () { try { osc.disconnect(); gain.disconnect(); } catch (e) {} });
+  }
+
+  function playGunHitSfx() {
+    const ctx = getAudioContext();
+    if (!ctx || ctx.state === "suspended") return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = "triangle";
+    osc.frequency.setValueAtTime(800, now);
+    osc.frequency.exponentialRampToValueAtTime(200, now + 0.09);
+    gain.gain.setValueAtTime(0.06, now);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.10);
+    osc.connect(gain); gain.connect(ctx.destination);
+    osc.start(now); osc.stop(now + 0.11);
+    osc.addEventListener("ended", function () { try { osc.disconnect(); gain.disconnect(); } catch (e) {} });
   }
 
   function playHealSfx() {
@@ -637,6 +697,10 @@
     enemies = [];
     obstacles = [];
     healItems = [];
+    gunItems = [];
+    playerBullets = [];
+    weapon = null;
+    ammo = 0;
     worldEndX = 1200;
     state = STATE.PLAYING;
     lastFrame = performance.now();
@@ -781,6 +845,12 @@
         healItems.push({ x: hx, y: groundY - 36, r: 14, taken: false });
       }
 
+      // 銃アイテム（低確率でスポーン）
+      if (!isBossBattle && Math.random() < GUN_ITEM_SPAWN_RATE) {
+        const gx = chunkStart + 80 + Math.random() * (chunkW - 160);
+        gunItems.push({ x: gx, y: groundY - 36, taken: false });
+      }
+
       worldEndX = chunkEnd;
     }
   }
@@ -792,6 +862,8 @@
     enemies = enemies.filter(function (e) { return e.x > cut; });
     obstacles = obstacles.filter(function (o) { return o.x + o.w > cut; });
     healItems = healItems.filter(function (h) { return h.x > cut; });
+    gunItems = gunItems.filter(function (g) { return g.x > cut; });
+    playerBullets = playerBullets.filter(function (b) { return b.x < cameraX + canvas.width + 100; });
   }
 
   function tryJump() {
@@ -814,6 +886,24 @@
     }
   }
 
+  function tryFireGun() {
+    if (state !== STATE.PLAYING) return;
+    if (weapon !== "gun" || ammo <= 0) return;
+    const bulletY = groundY - player.alt - 40;
+    playerBullets.push({
+      x: cameraX + PLAYER_SCREEN_X + 20,
+      y: bulletY,
+      w: 12,
+      h: 6,
+    });
+    ammo--;
+    if (ammo <= 0) {
+      weapon = null;
+      ammo = 0;
+    }
+    playGunShotSfx();
+  }
+
   function isEnterKey(e) {
     return e.key === "Enter" || e.code === "Enter" || e.code === "NumpadEnter";
   }
@@ -833,6 +923,7 @@
     } else {
       if ((e.code === "Space" || e.code === "KeyW") && !e.repeat) tryJump();
       if ((e.code === "ArrowDown" || e.code === "KeyS") && !e.repeat) trySlide();
+      if (e.code === "KeyZ" && !e.repeat) tryFireGun();
     }
     
     if (e.code === "KeyM" && !e.repeat) toggleBgm();
@@ -1196,6 +1287,63 @@
           score += 100;
         }
         playHealSfx();
+      }
+    }
+
+    // --- 銃アイテム取得判定 ---
+    for (let i = 0; i < gunItems.length; i++) {
+      const g = gunItems[i];
+      if (g.taken) continue;
+      const gr = { left: g.x - 16, right: g.x + 16, top: g.y - 12, bottom: g.y + 12 };
+      if (aabbOverlap(ph, gr)) {
+        g.taken = true;
+        if (weapon === "gun") {
+          ammo += GUN_AMMO;
+        } else {
+          weapon = "gun";
+          ammo = GUN_AMMO;
+        }
+        playGunPickupSfx();
+      }
+    }
+
+    // --- 弾の移動・敵ヒット判定 ---
+    for (let bi = playerBullets.length - 1; bi >= 0; bi--) {
+      const b = playerBullets[bi];
+      b.x += BULLET_SPEED * dt;
+      // 画面右外へ出たら削除（cullOffscreenでも処理するが即時削除）
+      if (b.x > cameraX + canvas.width + 60) {
+        playerBullets.splice(bi, 1);
+        continue;
+      }
+      const bb = {
+        left: b.x,
+        right: b.x + b.w,
+        top: b.y - b.h / 2,
+        bottom: b.y + b.h / 2,
+      };
+      let hit = false;
+      for (let ei = enemies.length - 1; ei >= 0; ei--) {
+        const e = enemies[ei];
+        let eb;
+        if (e.kind === "walker") {
+          eb = { left: e.x - e.w / 2, right: e.x + e.w / 2, top: groundY - e.h, bottom: groundY };
+        } else if (e.kind === "floater") {
+          const yy = e._y !== undefined ? e._y : e.y;
+          eb = { left: e.x - e.w / 2, right: e.x + e.w / 2, top: yy - e.h, bottom: yy };
+        } else {
+          eb = { left: e.x - e.w / 2, right: e.x + e.w / 2, top: e.baseY - e.h, bottom: e.baseY };
+        }
+        if (aabbOverlap(bb, eb)) {
+          enemies.splice(ei, 1);
+          score += 100;
+          playGunHitSfx();
+          hit = true;
+          break;
+        }
+      }
+      if (hit) {
+        playerBullets.splice(bi, 1);
       }
     }
 
@@ -1853,12 +2001,54 @@
       ctx.restore();
     }
 
+    // 銃アイテム描画
+    for (let i = 0; i < gunItems.length; i++) {
+      const g = gunItems[i];
+      if (g.taken) continue;
+      const sx = g.x - cameraX;
+      const sy = g.y;
+      ctx.save();
+      ctx.translate(sx, sy);
+      // アイテム枠（薄い青背景）
+      ctx.fillStyle = "rgba(60,120,200,0.5)";
+      ctx.fillRect(-16, -12, 32, 24);
+      ctx.strokeStyle = "#5ad0ff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-16, -12, 32, 24);
+      // 銃本体（銃身）
+      ctx.fillStyle = "#c8c8c8";
+      ctx.fillRect(-10, -3, 18, 6);
+      // 銃口
+      ctx.fillStyle = "#e8e8e8";
+      ctx.fillRect(8, -2, 6, 4);
+      // グリップ
+      ctx.fillStyle = "#a06040";
+      ctx.fillRect(-8, 2, 8, 7);
+      // トリガー
+      ctx.fillStyle = "#888";
+      ctx.fillRect(-2, 2, 2, 5);
+      // ハイライト
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(-9, -2, 10, 2);
+      ctx.restore();
+    }
+
+    // 銃弾描画
+    for (let i = 0; i < playerBullets.length; i++) {
+      const b = playerBullets[i];
+      const sx = b.x - cameraX;
+      ctx.fillStyle = "#ffe987";
+      ctx.fillRect(sx, b.y - b.h / 2, b.w, b.h);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(sx, b.y - 1, 4, 2);
+    }
+
     for (let i = 0; i < enemies.length; i++) drawEnemy(enemies[i]);
   }
 
   function drawHUD() {
     ctx.fillStyle = "rgba(0,0,0,0.45)";
-    ctx.fillRect(12, 12, 220, 110);
+    ctx.fillRect(12, 12, 220, 130);
     ctx.fillStyle = "#fff";
     ctx.font = "bold 20px system-ui,sans-serif";
     ctx.textAlign = "left";
@@ -1873,6 +2063,14 @@
     for (let i = 0; i < MAX_HP; i++) {
       ctx.fillStyle = i < playerHP ? "#ff5f6d" : "rgba(255,255,255,0.2)";
       ctx.fillText("♥", 24 + i * 26, 100);
+    }
+
+    // 武器・弾数表示
+    if (weapon === "gun") {
+      ctx.fillStyle = "#5ad0ff";
+      ctx.font = "bold 16px system-ui,sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("GUN  " + ammo + " / " + GUN_AMMO, 24, 122);
     }
 
     if (state === STATE.PLAYING) {
