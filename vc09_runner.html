@@ -1031,14 +1031,21 @@
         continue;
       }
       
-      // 博士との当たり判定 (AABB)
+      // 博士との当たり判定 (AABB) — 炎はスクリーン座標のため専用のプレイヤーBoxを使う
       const fireHitBox = {
         left: f.x + 6,
         right: f.x + f.w - 6,
         top: f.y + 6,
         bottom: f.y + f.h - 6
       };
-      const playerBox = playerAABB();
+      const _fhs = playerHitSize();
+      const _fbottom = groundY - player.alt;
+      const playerBox = {
+        left:   PLAYER_SCREEN_X - _fhs.w / 2,
+        right:  PLAYER_SCREEN_X + _fhs.w / 2,
+        top:    _fbottom - _fhs.h,
+        bottom: _fbottom
+      };
       if (aabbOverlap(playerBox, fireHitBox)) {
         takeDamage();
         if (state === STATE.GAMEOVER) return;
