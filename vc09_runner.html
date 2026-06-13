@@ -62,6 +62,14 @@
       <source src="assets/sounds/Hakase-Runner-Loop.ogg" type="audio/ogg">
       <source src="assets/sounds/Hakase-Runner-Loop.mp3" type="audio/mpeg">
     </audio>
+    <audio id="bossBgm" preload="auto" loop>
+      <source src="assets/sounds/Absolute_Threat.ogg" type="audio/ogg">
+      <source src="assets/sounds/Absolute_Threat.mp3" type="audio/mpeg">
+    </audio>
+    <audio id="fanfare" preload="auto">
+      <source src="assets/sounds/Boss_Clear_Fanfare.ogg" type="audio/ogg">
+      <source src="assets/sounds/Boss_Clear_Fanfare.mp3" type="audio/mpeg">
+    </audio>
     <canvas id="game" width="960" height="540" tabindex="0" aria-label="博士ランナー ゲーム画面"></canvas>
     <p id="hint">PC: Space/W ジャンプ · ↓/S スライド · Enter スタート/リトライ　スマホ: タップ=ジャンプ · 下スワイプ=スライド</p>
   </div>
@@ -72,6 +80,8 @@
   const canvas = document.getElementById("game");
   const wrap = document.getElementById("wrap");
   const bgm = document.getElementById("bgm");
+  const bossBgm = document.getElementById("bossBgm");
+  const fanfare = document.getElementById("fanfare");
   const bgmToggle = document.getElementById("bgmToggle");
   const ctx = canvas.getContext("2d");
 
@@ -90,7 +100,7 @@
   const BOSS_CLEAR_POINTS_BASE = 500;      // ステージ1のボス突破に必要なポイント
   const BOSS_CLEAR_POINTS_GROWTH = 200;    // ステージごとのボス突破ポイント増加量
   const STAGE_INTRO_DURATION = 3.0;        // ステージ表示の表示時間（秒）
-  const STAGE_CLEAR_DURATION = 3.0;        // STAGE CLEAR表示の表示時間（秒）
+  const STAGE_CLEAR_DURATION = 5.0;        // STAGE CLEAR表示の表示時間（秒）
 
   // --- ボス（怪獣）の設定（定数） ---
   const BOSS_WIDTH = 90;                  // ボスの幅
@@ -188,6 +198,8 @@
   let gameOverJingleNodes = [];
 
   bgm.volume = 0.45;
+  bossBgm.volume = 0.50;
+  fanfare.volume = 0.55;
 
   function getAudioContext() {
     const AudioContextClass = window.AudioContext || window.webkitAudioContext;
@@ -659,25 +671,54 @@
     bgmToggle.setAttribute("aria-pressed", bgmEnabled ? "true" : "false");
   }
 
+  function _safePlay(audio, restart) {
+    if (restart) {
+      try { audio.currentTime = 0; } catch (err) {}
+    }
+    const p = audio.play();
+    if (p && typeof p.catch === "function") {
+      p.catch(function () {});
+    }
+  }
+
   function playBgm(restart) {
     if (!bgmEnabled || state !== STATE.PLAYING) return;
-    if (restart) {
-      try {
-        bgm.currentTime = 0;
-      } catch (err) {
-        /* Some browsers may block seeking before metadata is ready. */
-      }
-    }
-    const playPromise = bgm.play();
-    if (playPromise && typeof playPromise.catch === "function") {
-      playPromise.catch(function () {
-        /* Autoplay restrictions are expected until a user gesture starts the game. */
-      });
-    }
+    _safePlay(bgm, restart);
   }
 
   function pauseBgm() {
     bgm.pause();
+  }
+
+  function playBossBgm() {
+    if (!bgmEnabled || state !== STATE.PLAYING) return;
+    bgm.pause();
+    _safePlay(bossBgm, true);
+  }
+
+  function pauseBossBgm() {
+    bossBgm.pause();
+    try { bossBgm.currentTime = 0; } catch (err) {}
+  }
+
+  function playFanfare() {
+    if (!bgmEnabled) return;
+    try { fanfare.currentTime = 0; } catch (err) {}
+    const p = fanfare.play();
+    if (p && typeof p.catch === "function") p.catch(function () {});
+    // 7秒後に停止
+    setTimeout(function () {
+      fanfare.pause();
+      try { fanfare.currentTime = 0; } catch (err) {}
+    }, 7000);
+  }
+
+  function stopAllBgm() {
+    bgm.pause();
+    bossBgm.pause();
+    fanfare.pause();
+    try { bossBgm.currentTime = 0; } catch (err) {}
+    try { fanfare.currentTime = 0; } catch (err) {}
   }
 
   function takeDamage() {
@@ -695,7 +736,7 @@
     if (state === STATE.GAMEOVER) return;
     state = STATE.GAMEOVER;
     gameOverSelectIndex = 0;
-    pauseBgm();
+    stopAllBgm();
     playGameOverSfx();
     playGameOverJingle();
   }
@@ -714,9 +755,13 @@
     bgmEnabled = !bgmEnabled;
     updateBgmButton();
     if (bgmEnabled) {
-      playBgm(false);
+      if (isBossBattle) {
+        playBossBgm();
+      } else {
+        playBgm(false);
+      }
     } else {
-      pauseBgm();
+      stopAllBgm();
     }
   }
 
@@ -1103,6 +1148,36 @@
   function update(dt) {
     if (state !== STATE.PLAYING) return;
 
+    // --- ステージクリア中：時間・スコア・生成を止め、演出だけ更新 ---
+    if (stageTextType === "CLEAR") {
+      stageTextTimer -= dt;
+      if (stageTextTimer <= 0) {
+        currentStage++;
+        stageScoreStart = score;
+        stageTextTimer = STAGE_INTRO_DURATION;
+        stageTextType = "INTRO";
+        fanfare.pause();
+        try { fanfare.currentTime = 0; } catch (err) {}
+        playBgm(true);
+      }
+      // 爆発パーティクルだけ継続
+      if (bossExplosionTimer > 0) {
+        bossExplosionTimer -= dt;
+        for (let i = 0; i < bossParticles.length; i++) {
+          const p = bossParticles[i];
+          p.x += p.vx * dt;
+          p.y += p.vy * dt;
+          p.vy += 200 * dt;
+          p.age += dt;
+        }
+      }
+      for (let i = bossHitFlashes.length - 1; i >= 0; i--) {
+        bossHitFlashes[i].timer -= dt;
+        if (bossHitFlashes[i].timer <= 0) bossHitFlashes.splice(i, 1);
+      }
+      return;
+    }
+
     gameTime += dt;
     const spd = scrollSpeed();
     cameraX += spd * dt;
@@ -1110,19 +1185,11 @@
     score += dt * 12;
     ensureWorld(cameraX + 1400);
 
-    // --- ステージ・ボス戦の演出タイマー更新 ---
+    // --- ステージ演出タイマー更新（INTRO / 空のみ） ---
     if (stageTextTimer > 0) {
       stageTextTimer -= dt;
       if (stageTextTimer <= 0) {
-        if (stageTextType === "CLEAR") {
-          // 次のステージへ進行
-          currentStage++;
-          stageScoreStart = score;
-          stageTextTimer = STAGE_INTRO_DURATION;
-          stageTextType = "INTRO";
-        } else {
-          stageTextType = "";
-        }
+        stageTextType = "";
       }
     }
 
@@ -1139,6 +1206,7 @@
         bossJumpTimer = BOSS_JUMP_INTERVAL;
         bossFireTimer = BOSS_FIRE_INTERVAL;
         bossProjectiles = [];
+        playBossBgm();
       }
     }
 
@@ -1156,6 +1224,8 @@
         bossExplosionX = (canvas.width + 100) - ((canvas.width + 100) - BOSS_SCREEN_X) * slideInProgress;
         bossExplosionY = groundY - 65; // ボスのほぼ中心 (groundY - BOSS_HEIGHT/2)
         bossExplosionTimer = 1.2;
+        pauseBossBgm();
+        playFanfare();
         playExplosionSfx(); // 爆発音の再生
 
         bossParticles = [];
@@ -1175,10 +1245,18 @@
           });
         }
 
-        // ボスアクション状態と炎弾をリセット
+        // ボスアクション状態・炎弾・前ステージの危険要素をリセット
         bossProjectiles = [];
         bossAlt = 0;
         bossVy = 0;
+        enemies = [];
+        obstacles = [];
+        playerBullets = [];
+        bazookaBullets = [];
+        coins = [];
+        healItems = [];
+        gunItems = [];
+        bazookaItems = [];
       }
     }
 
