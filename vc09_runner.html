@@ -183,9 +183,18 @@
   const BAZOOKA_SPEED = 420;
   const GUN_ITEM_SPAWN_RATE = 0.08;
   const BAZOOKA_ITEM_SPAWN_RATE = 0.04;
+  const TRIPLE_JUMP_DURATION = 10.0;
+  const TRIPLE_JUMP_SPAWN_RATE = 0.12;
+  const TRIPLE_JUMP_MAX = 3;
   let bazookaItems = [];
   let bazookaBullets = [];
   let bossHitFlashes = [];  // ボス命中エフェクト { x, y, timer }
+  let tripleJumpItems = [];
+  let tripleJumpTimer = 0;   // 3段ジャンプ効果の残り時間（秒）
+  let tripleJumpFlash = 0;   // 取得時フラッシュ残り時間（秒）
+  const TRIPLE_JUMP_FLASH_DUR = 0.8;
+  let tripleJumpPopup = 0;   // "3JUMP!" ポップアップ残り時間（秒）
+  const TRIPLE_JUMP_POPUP_DUR = 0.9;
 
   let worldEndX = 0;
 
@@ -489,6 +498,31 @@
     osc.connect(gain); gain.connect(ctx.destination);
     osc.start(now); osc.stop(now + 0.11);
     osc.addEventListener("ended", function () { try { osc.disconnect(); gain.disconnect(); } catch (e) {} });
+  }
+
+  function playTripleJumpSfx() {
+    const ctx = getAudioContext();
+    if (!ctx || ctx.state === "suspended") return;
+    const now = ctx.currentTime;
+    const notes = [
+      { t: 0.00, f: 523 },
+      { t: 0.08, f: 784 },
+      { t: 0.16, f: 1047 },
+      { t: 0.24, f: 1319 },
+    ];
+    for (let i = 0; i < notes.length; i++) {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      const t0 = now + notes[i].t;
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(notes[i].f, t0);
+      gain.gain.setValueAtTime(0.0001, t0);
+      gain.gain.linearRampToValueAtTime(0.06, t0 + 0.01);
+      gain.gain.exponentialRampToValueAtTime(0.0001, t0 + 0.12);
+      osc.connect(gain); gain.connect(ctx.destination);
+      osc.start(t0); osc.stop(t0 + 0.13);
+      osc.addEventListener("ended", function () { try { osc.disconnect(); gain.disconnect(); } catch (e) {} });
+    }
   }
 
   function playHealSfx() {
@@ -822,6 +856,10 @@
     bazookaItems = [];
     bazookaBullets = [];
     bossHitFlashes = [];
+    tripleJumpItems = [];
+    tripleJumpTimer = 0;
+    tripleJumpFlash = 0;
+    tripleJumpPopup = 0;
     weapon = null;
     ammo = 0;
     worldEndX = 1200;
@@ -970,15 +1008,21 @@
       }
 
       // 銃アイテム（低確率でスポーン）
-      if (!isBossBattle && Math.random() < GUN_ITEM_SPAWN_RATE) {
+      if (Math.random() < GUN_ITEM_SPAWN_RATE) {
         const gx = chunkStart + 80 + Math.random() * (chunkW - 160);
         gunItems.push({ x: gx, y: groundY - 36, taken: false });
       }
 
       // バズーカアイテム（銃より低確率でスポーン）
-      if (!isBossBattle && Math.random() < BAZOOKA_ITEM_SPAWN_RATE) {
+      if (Math.random() < BAZOOKA_ITEM_SPAWN_RATE) {
         const bx = chunkStart + 80 + Math.random() * (chunkW - 160);
         bazookaItems.push({ x: bx, y: groundY - 36, taken: false });
+      }
+
+      // 3段ジャンプアイテム（低確率でスポーン）
+      if (Math.random() < TRIPLE_JUMP_SPAWN_RATE) {
+        const tx = chunkStart + 80 + Math.random() * (chunkW - 160);
+        tripleJumpItems.push({ x: tx, y: groundY - 36, taken: false });
       }
 
       worldEndX = chunkEnd;
@@ -994,13 +1038,15 @@
     healItems = healItems.filter(function (h) { return h.x > cut; });
     gunItems = gunItems.filter(function (g) { return g.x > cut; });
     bazookaItems = bazookaItems.filter(function (g) { return g.x > cut; });
+    tripleJumpItems = tripleJumpItems.filter(function (t) { return t.x > cut; });
     playerBullets = playerBullets.filter(function (b) { return b.x < cameraX + canvas.width + 100; });
     bazookaBullets = bazookaBullets.filter(function (b) { return b.x < cameraX + canvas.width + 100; });
   }
 
   function tryJump() {
     if (state !== STATE.PLAYING || isPaused) return;
-    if (player.jumpsLeft > 0 && !player.sliding) {
+    const maxJumps = tripleJumpTimer > 0 ? TRIPLE_JUMP_MAX : MAX_JUMPS;
+    if (player.jumpsLeft > 0 && player.jumpsLeft <= maxJumps && !player.sliding) {
       unlockAudio();
       player.vy = JUMP_V;
       player.onGround = false;
@@ -1392,7 +1438,7 @@
         if (player.vy < 0) player.vy = 0;
       }
       player.onGround = player.alt <= 0.5 && player.vy <= 0.5;
-      if (player.onGround) player.jumpsLeft = MAX_JUMPS;
+      if (player.onGround) player.jumpsLeft = tripleJumpTimer > 0 ? TRIPLE_JUMP_MAX : MAX_JUMPS;
     } else {
       player.onGround = false;
       if (player.alt < -80) {
@@ -1463,6 +1509,33 @@
         playHealSfx();
       }
     }
+
+    // --- 3段ジャンプアイテムの取得判定 ---
+    for (let i = 0; i < tripleJumpItems.length; i++) {
+      const t = tripleJumpItems[i];
+      if (t.taken) continue;
+      const tr = { left: t.x - 16, right: t.x + 16, top: t.y - 14, bottom: t.y + 14 };
+      if (aabbOverlap(ph, tr)) {
+        t.taken = true;
+        tripleJumpTimer = TRIPLE_JUMP_DURATION;
+        tripleJumpFlash = TRIPLE_JUMP_FLASH_DUR;
+        tripleJumpPopup = TRIPLE_JUMP_POPUP_DUR;
+        if (player.onGround) player.jumpsLeft = TRIPLE_JUMP_MAX;
+        playTripleJumpSfx();
+      }
+    }
+
+    // --- 3段ジャンプタイマー更新 ---
+    if (tripleJumpTimer > 0) {
+      tripleJumpTimer -= dt;
+      if (tripleJumpTimer <= 0) {
+        tripleJumpTimer = 0;
+        // 空中で効果切れた場合、jumpsLeft を MAX_JUMPS にクランプ
+        if (player.jumpsLeft > MAX_JUMPS) player.jumpsLeft = MAX_JUMPS;
+      }
+    }
+    if (tripleJumpFlash > 0) tripleJumpFlash = Math.max(0, tripleJumpFlash - dt);
+    if (tripleJumpPopup > 0) tripleJumpPopup = Math.max(0, tripleJumpPopup - dt);
 
     // --- 銃アイテム取得判定 ---
     for (let i = 0; i < gunItems.length; i++) {
@@ -1840,6 +1913,69 @@
 
     ctx.save();
     ctx.translate(cx, base);
+
+    // 3段ジャンプ取得時フラッシュ（0.4秒）
+    if (tripleJumpFlash > 0) {
+      const fp = tripleJumpFlash / TRIPLE_JUMP_FLASH_DUR; // 1→0
+      // 外側リング（大きく広がる）
+      ctx.globalAlpha = fp * 0.9;
+      ctx.strokeStyle = "#5ad0ff";
+      ctx.lineWidth = 5;
+      const fr = 20 + (1 - fp) * 55;
+      ctx.beginPath(); ctx.arc(0, -40, fr, 0, Math.PI * 2); ctx.stroke();
+      // 中リング
+      ctx.globalAlpha = fp * 0.6;
+      ctx.strokeStyle = "#a0eeff";
+      ctx.lineWidth = 3;
+      ctx.beginPath(); ctx.arc(0, -40, fr * 0.65, 0, Math.PI * 2); ctx.stroke();
+      // 内側白リング
+      ctx.globalAlpha = fp * 0.4;
+      ctx.strokeStyle = "#ffffff";
+      ctx.lineWidth = 2;
+      ctx.beginPath(); ctx.arc(0, -40, fr * 0.35, 0, Math.PI * 2); ctx.stroke();
+      // 放射粒子（12方向・大きめ）
+      ctx.globalAlpha = fp * 1.0;
+      for (let pi = 0; pi < 12; pi++) {
+        const angle = (pi / 12) * Math.PI * 2;
+        const dist = 18 + (1 - fp) * 48;
+        const px = Math.cos(angle) * dist;
+        const py = Math.sin(angle) * dist - 40;
+        ctx.fillStyle = pi % 3 === 0 ? "#ffffff" : "#5ad0ff";
+        ctx.fillRect(px - 3, py - 3, 5, 5);
+      }
+      ctx.globalAlpha = 1.0;
+      ctx.lineWidth = 1;
+    }
+    // "3JUMP!" ポップアップ文字
+    if (tripleJumpPopup > 0) {
+      const pp = tripleJumpPopup / TRIPLE_JUMP_POPUP_DUR; // 1→0
+      const rise = (1 - pp) * 28;  // 上昇量
+      ctx.globalAlpha = pp > 0.3 ? 1.0 : pp / 0.3;
+      ctx.font = "bold 18px system-ui,sans-serif";
+      ctx.textAlign = "center";
+      ctx.strokeStyle = "#003366";
+      ctx.lineWidth = 4;
+      ctx.strokeText("3JUMP!", 0, -80 - rise);
+      ctx.fillStyle = "#5ad0ff";
+      ctx.fillText("3JUMP!", 0, -80 - rise);
+      ctx.globalAlpha = 1.0;
+      ctx.lineWidth = 1;
+      ctx.textAlign = "left";
+    }
+
+    // 3段ジャンプ効果中：足元に青いオーラリングを描画
+    if (tripleJumpTimer > 0) {
+      const pulse = 0.55 + 0.45 * Math.sin(gameTime * 10);
+      ctx.globalAlpha = 0.55 * pulse;
+      ctx.fillStyle = "#5ad0ff";
+      ctx.fillRect(-22, -6, 44, 6);
+      ctx.fillRect(-16, -10, 10, 4);
+      ctx.fillRect(6, -10, 10, 4);
+      ctx.globalAlpha = 0.35 * pulse;
+      ctx.fillStyle = "#a0eeff";
+      ctx.fillRect(-26, -4, 52, 4);
+      ctx.globalAlpha = 1.0;
+    }
 
     ctx.fillStyle = "rgba(0,0,0,0.25)";
     ctx.fillRect(-20, -3, 40, 5);
@@ -2365,12 +2501,105 @@
       ctx.fillRect(sx - 6, b.y - b.h / 2 + 3, 8, b.h - 6);
     }
 
+    // 3段ジャンプアイテム描画（ジャンピングシューズ・大きめ・高視認性）
+    for (const item of tripleJumpItems) {
+      if (item.taken) continue;
+      const sx = item.x - cameraX;
+      ctx.save();
+      // item.y = groundY - 36 で登録済み。w/h/alt は未定義なので使わない
+      ctx.translate(sx, item.y);
+      // 浮遊アニメ
+      const bob = Math.sin(gameTime * 4 + item.x * 0.01) * 4;
+      ctx.translate(0, bob);
+
+      // 外周グロー（点滅）
+      const glowPulse = 0.6 + 0.4 * Math.sin(gameTime * 6 + item.x * 0.02);
+      ctx.shadowColor = "#5ad0ff";
+      ctx.shadowBlur = 18 * glowPulse;
+
+      // 背景パネル（暗い青・アイテムを際立たせる）
+      ctx.fillStyle = "rgba(0,30,80,0.75)";
+      ctx.fillRect(-18, -22, 36, 38);
+      ctx.strokeStyle = "#5ad0ff";
+      ctx.lineWidth = 2;
+      ctx.strokeRect(-18, -22, 36, 38);
+
+      ctx.shadowBlur = 0;
+
+      // --- シューズ本体（一回り大きく）---
+      // かかと
+      ctx.fillStyle = "#0077bb";
+      ctx.fillRect(-16, 0, 5, 12);
+      ctx.fillStyle = "#005599";
+      ctx.fillRect(-16, 10, 5, 2);
+
+      // 甲メイン
+      ctx.fillStyle = "#1ad0ff";
+      ctx.fillRect(-11, -4, 24, 14);
+      // 甲ハイライト上
+      ctx.fillStyle = "#a0eeff";
+      ctx.fillRect(-11, -4, 24, 4);
+      // 甲影下
+      ctx.fillStyle = "#0088bb";
+      ctx.fillRect(-11, 9, 24, 1);
+
+      // つま先
+      ctx.fillStyle = "#1ad0ff";
+      ctx.fillRect(13, -1, 5, 9);
+      ctx.fillStyle = "#a0eeff";
+      ctx.fillRect(13, -1, 5, 3);
+
+      // 靴紐（白2本）
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(-6, 0, 4, 3);
+      ctx.fillRect(3, 0, 4, 3);
+
+      // ソール（太め）
+      ctx.fillStyle = "#00cfff";
+      ctx.fillRect(-16, 11, 34, 5);
+      // ソール下影
+      ctx.fillStyle = "#005599";
+      ctx.fillRect(-16, 15, 34, 2);
+      // ソール発光粒子（バネ感）
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(-12, 12, 5, 3);
+      ctx.fillRect(0, 12, 5, 3);
+      ctx.fillRect(12, 12, 5, 3);
+
+      // 上向き矢印×3（アイコン中央上）
+      const aC = ["#ffffff", "#a0eeff", "#5ad0ff"];
+      for (let ai = 0; ai < 3; ai++) {
+        ctx.fillStyle = aC[ai];
+        const ay = -7 - ai * 5;
+        // ▲ ドット絵風三角
+        ctx.fillRect(-1, ay - 2, 2, 3);
+        ctx.fillRect(-3, ay, 6, 2);
+        ctx.fillRect(-2, ay - 4, 4, 2);
+        ctx.fillRect(-1, ay - 6, 2, 2);
+      }
+
+      // "3J" ラベル（右下）
+      ctx.shadowBlur = 0;
+      ctx.font = "bold 10px system-ui,sans-serif";
+      ctx.textAlign = "center";
+      ctx.strokeStyle = "#003366";
+      ctx.lineWidth = 3;
+      ctx.strokeText("3J", 5, 8);
+      ctx.fillStyle = "#ffffff";
+      ctx.fillText("3J", 5, 8);
+      ctx.lineWidth = 1;
+      ctx.textAlign = "left";
+
+      ctx.restore();
+    }
+
     for (let i = 0; i < enemies.length; i++) drawEnemy(enemies[i]);
   }
 
   function drawHUD() {
+    const hudH = 130 + (weapon ? 26 : 0) + (tripleJumpTimer > 0 ? 26 : 0);
     ctx.fillStyle = "rgba(0,0,0,0.45)";
-    ctx.fillRect(12, 12, 220, 130);
+    ctx.fillRect(12, 12, 220, hudH);
     ctx.fillStyle = "#fff";
     ctx.font = "bold 20px system-ui,sans-serif";
     ctx.textAlign = "left";
@@ -2388,16 +2617,27 @@
     }
 
     // 武器・弾数表示
+    // 武器・弾数 + 3段ジャンプタイマー表示（行数に応じてパネル高さ自動）
+    let hudRow = 122;
     if (weapon === "gun") {
       ctx.fillStyle = "#5ad0ff";
       ctx.font = "bold 16px system-ui,sans-serif";
       ctx.textAlign = "left";
-      ctx.fillText("GUN  " + ammo + " / " + GUN_AMMO, 24, 122);
+      ctx.fillText("GUN  " + ammo + " / " + GUN_AMMO, 24, hudRow);
+      hudRow += 26;
     } else if (weapon === "bazooka") {
       ctx.fillStyle = "#ff9940";
       ctx.font = "bold 16px system-ui,sans-serif";
       ctx.textAlign = "left";
-      ctx.fillText("BZK  " + ammo + " / " + BAZOOKA_AMMO, 24, 122);
+      ctx.fillText("BZK  " + ammo + " / " + BAZOOKA_AMMO, 24, hudRow);
+      hudRow += 26;
+    }
+    if (tripleJumpTimer > 0) {
+      const pulse = 0.7 + 0.3 * Math.sin(gameTime * 8);
+      ctx.fillStyle = `rgba(90,208,255,${pulse})`;
+      ctx.font = "bold 16px system-ui,sans-serif";
+      ctx.textAlign = "left";
+      ctx.fillText("3JUMP " + tripleJumpTimer.toFixed(1) + "s", 24, hudRow);
     }
 
     if (state === STATE.PLAYING) {
